@@ -10,22 +10,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
 
-      - name: Create All Project Files Automatically
+      - name: Generate Project Files
         run: |
           mkdir -p app/src/main/java/com/example/autoclaimer
 
-          cat << 'EOF' > settings.gradle.kts
+          # 1. settings.gradle
+          cat << 'EOF' > settings.gradle
           pluginManagement {
               repositories {
                   google()
@@ -41,48 +48,63 @@ jobs:
               }
           }
           rootProject.name = "AutoClaimer"
-          include(":app")
+          include ':app'
           EOF
 
-          cat << 'EOF' > build.gradle.kts
-          plugins {
-              id("com.android.application") version "8.2.2" apply false
-              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          # 2. build.gradle
+          cat << 'EOF' > build.gradle
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:8.2.2'
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
           }
           EOF
 
-          cat << 'EOF' > app/build.gradle.kts
-          plugins {
-              id("com.android.application")
-              id("org.jetbrains.kotlin.android")
-          }
+          # 3. app/build.gradle
+          cat << 'EOF' > app/build.gradle
+          apply plugin: 'com.android.application'
+
           android {
-              namespace = "com.example.autoclaimer"
-              compileSdk = 34
+              namespace 'com.example.autoclaimer'
+              compileSdk 34
+
               defaultConfig {
-                  applicationId = "com.example.autoclaimer"
-                  minSdk = 24
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
+                  applicationId "com.example.autoclaimer"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
               }
               compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_1_8
-                  targetCompatibility = JavaVersion.VERSION_1_8
-              }
-              kotlinOptions {
-                  jvmTarget = "1.8"
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
               }
           }
+
           dependencies {
-              implementation("androidx.core:core-ktx:1.12.0")
-              implementation("androidx.appcompat:appcompat:1.6.1")
-              implementation("com.google.android.material:material:1.11.0")
-              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-              implementation("com.squareup.okhttp3:okhttp:4.12.0")
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'com.google.android.material:material:1.11.0'
+              implementation 'com.squareup.okhttp3:okhttp:4.12.0'
           }
           EOF
 
+          # 4. AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -93,7 +115,6 @@ jobs:
               <application
                   android:allowBackup="true"
                   android:label="0.1s Auto Claimer"
-                  android:supportsRtl="true"
                   android:theme="@style/Theme.AppCompat.Light.NoActionBar">
                   <activity
                       android:name=".MainActivity"
@@ -111,361 +132,319 @@ jobs:
           </manifest>
           EOF
 
-          cat << 'EOF' > app/src/main/java/com/example/autoclaimer/MainActivity.kt
-          package com.example.autoclaimer
+          # 5. MainActivity.java
+          cat << 'EOF' > app/src/main/java/com/example/autoclaimer/MainActivity.java
+          package com.example.autoclaimer;
 
-          import android.app.*
-          import android.content.*
-          import android.graphics.Color
-          import android.graphics.PixelFormat
-          import android.graphics.drawable.GradientDrawable
-          import android.net.Uri
-          import android.os.Build
-          import android.os.Bundle
-          import android.os.IBinder
-          import android.provider.Settings
-          import android.view.*
-          import android.widget.*
-          import androidx.appcompat.app.AppCompatActivity
-          import androidx.core.app.NotificationCompat
-          import kotlinx.coroutines.*
-          import okhttp3.*
-          import okhttp3.RequestBody.Companion.toRequestBody
-          import java.net.InetAddress
-          import java.util.concurrent.ConcurrentHashMap
-          import java.util.concurrent.TimeUnit
+          import android.app.*;
+          import android.content.*;
+          import android.graphics.Color;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.widget.*;
+          import androidx.appcompat.app.AppCompatActivity;
 
-          data class AccountSession(
-              val token: String,
-              val domain: String,
-              val endpointPath: String = "/api/web/v1/gift/receive"
-          )
-
-          object FastClaimEngine {
-              private val dnsMap = ConcurrentHashMap<String, List<InetAddress>>()
-
-              private val fastDns = object : Dns {
-                  override fun lookup(hostname: String): List<InetAddress> {
-                      return dnsMap[hostname] ?: Dns.SYSTEM.lookup(hostname).also { dnsMap[hostname] = it }
-                  }
-              }
-
-              private val httpClient = OkHttpClient.Builder()
-                  .connectionPool(ConnectionPool(50, 10, TimeUnit.MINUTES))
-                  .dns(fastDns)
-                  .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
-                  .connectTimeout(1, TimeUnit.SECONDS)
-                  .readTimeout(1, TimeUnit.SECONDS)
-                  .writeTimeout(1, TimeUnit.SECONDS)
-                  .retryOnConnectionFailure(false)
-                  .build()
-
-              private val MEDIA_TYPE_JSON = MediaType.get("application/json; charset=utf-8")
-
-              fun preWarmConnections(domains: List<String>) {
-                  CoroutineScope(Dispatchers.IO).launch {
-                      domains.distinct().forEach { domain ->
-                          launch {
-                              try {
-                                  val pingReq = Request.Builder().url("https://$domain/").head().build()
-                                  httpClient.newCall(pingReq).execute().close()
-                              } catch (_: Exception) {}
+          public class MainActivity extends AppCompatActivity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  Button btn = new Button(this);
+                  btn.setText("START 0.1s FLOATING CLAIMER");
+                  btn.setBackgroundColor(Color.parseColor("#FF6600"));
+                  btn.setTextColor(Color.WHITE);
+                  btn.setTextSize(16f);
+                  btn.setOnClickListener(v -> {
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                          Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()));
+                          startActivity(intent);
+                          Toast.makeText(this, "Overlay Permission Allow Karein", Toast.LENGTH_LONG).show();
+                      } else {
+                          Intent svc = new Intent(this, FloatingClaimerService.class);
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                              startForegroundService(svc);
+                          } else {
+                              startService(svc);
                           }
+                          finish();
                       }
-                  }
+                  });
+                  setContentView(btn);
               }
-
-              suspend fun fireInstant(code: String, accounts: List<AccountSession>): List<Int> =
-                  withContext(Dispatchers.IO) {
-                      val rawPayload = """{"giftCode":"$code"}""".toByteArray()
-
-                      accounts.map { account ->
-                          async {
-                              val request = Request.Builder()
-                                  .url("https://${account.domain}${account.endpointPath}")
-                                  .addHeader("Authorization", "Bearer ${account.token}")
-                                  .addHeader("Accept", "application/json")
-                                  .addHeader("Connection", "keep-alive")
-                                  .post(rawPayload.toRequestBody(MEDIA_TYPE_JSON))
-                                  .build()
-
-                              try {
-                                  httpClient.newCall(request).execute().use { it.code }
-                              } catch (e: Exception) {
-                                  500
-                              }
-                          }
-                      }.awaitAll()
-                  }
           }
+          EOF
 
-          class FloatingClaimerService : Service() {
+          # 6. FloatingClaimerService.java
+          cat << 'EOF' > app/src/main/java/com/example/autoclaimer/FloatingClaimerService.java
+          package com.example.autoclaimer;
 
-              private lateinit var windowManager: WindowManager
-              private lateinit var floatingView: View
-              private lateinit var etGiftCode: EditText
-              private lateinit var tvStatus: TextView
-              private lateinit var btnAutoFire: Button
+          import android.app.*;
+          import android.content.*;
+          import android.graphics.Color;
+          import android.graphics.PixelFormat;
+          import android.graphics.drawable.GradientDrawable;
+          import android.os.Build;
+          import android.os.IBinder;
+          import android.view.*;
+          import android.widget.*;
+          import androidx.core.app.NotificationCompat;
+          import okhttp3.*;
+          import java.util.*;
+          import java.util.concurrent.*;
 
-              private var isAutoFireEnabled = false
-              private val serviceScope = CoroutineScope(Dispatchers.Main)
+          public class FloatingClaimerService extends Service {
+              private WindowManager wm;
+              private View floatingView;
+              private EditText etCode;
+              private TextView tvStatus;
+              private Button btnAuto;
+              private boolean isAutoOn = false;
+              private ExecutorService executor = Executors.newFixedThreadPool(20);
 
-              private val registeredAccounts = listOf(
-                  AccountSession("YOUR_AUTH_TOKEN_1", "varanasi91.com"),
-                  AccountSession("YOUR_AUTH_TOKEN_2", "559874.com"),
-                  AccountSession("YOUR_AUTH_TOKEN_3", "bdggame.com")
-              )
+              private OkHttpClient client = new OkHttpClient.Builder()
+                      .connectionPool(new ConnectionPool(50, 10, TimeUnit.MINUTES))
+                      .connectTimeout(1, TimeUnit.SECONDS)
+                      .readTimeout(1, TimeUnit.SECONDS)
+                      .retryOnConnectionFailure(false)
+                      .build();
 
-              override fun onBind(intent: Intent?): IBinder? = null
+              private final List<String[]> accounts = Arrays.asList(
+                      new String[]{"YOUR_AUTH_TOKEN_1", "varanasi91.com"},
+                      new String[]{"YOUR_AUTH_TOKEN_2", "559874.com"},
+                      new String[]{"YOUR_AUTH_TOKEN_3", "bdggame.com"}
+              );
 
-              override fun onCreate() {
-                  super.onCreate()
-                  startForegroundNotification()
-                  setupFloatingWindow()
+              @Override
+              public IBinder onBind(Intent intent) { return null; }
 
-                  val domains = registeredAccounts.map { it.domain }
-                  FastClaimEngine.preWarmConnections(domains)
-
-                  setupClipboardListener()
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  startNotification();
+                  initUI();
+                  preWarm();
+                  initClipboard();
               }
 
-              private fun setupFloatingWindow() {
-                  windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-
-                  val density = resources.displayMetrics.density
-                  fun dp(v: Int) = (v * density).toInt()
-
-                  val rootLayout = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      setPadding(dp(12), dp(12), dp(12), dp(12))
-                      background = GradientDrawable().apply {
-                          setColor(Color.parseColor("#161622"))
-                          cornerRadius = dp(10).toFloat()
-                      }
+              private void preWarm() {
+                  for (String[] acc : accounts) {
+                      executor.execute(() -> {
+                          try {
+                              Request r = new Request.Builder().url("https://" + acc[1] + "/").head().build();
+                              client.newCall(r).execute().close();
+                          } catch (Exception ignored) {}
+                      });
                   }
+              }
 
-                  val headerLayout = LinearLayout(this).apply {
-                      orientation = LinearLayout.HORIZONTAL
-                      gravity = Gravity.CENTER_VERTICAL
-                  }
+              private void initUI() {
+                  wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                  float density = getResources().getDisplayMetrics().density;
+                  int dp12 = (int)(12 * density);
+                  int dp8 = (int)(8 * density);
+                  int dp42 = (int)(42 * density);
+                  int dp320 = (int)(320 * density);
 
-                  val tvTitle = TextView(this).apply {
-                      text = "⚡ 0.1s ULTRA CLAIMER"
-                      setTextColor(Color.parseColor("#00FF66"))
-                      textSize = 13f
-                      setTypeface(null, android.graphics.Typeface.BOLD)
-                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                  }
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(dp12, dp12, dp12, dp12);
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setColor(Color.parseColor("#161622"));
+                  bg.setCornerRadius(10 * density);
+                  root.setBackground(bg);
 
-                  val btnClose = Button(this).apply {
-                      text = "✕"
-                      setTextColor(Color.WHITE)
-                      setBackgroundColor(Color.parseColor("#FF3B30"))
-                      layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
-                      setPadding(0, 0, 0, 0)
-                  }
-                  headerLayout.addView(tvTitle)
-                  headerLayout.addView(btnClose)
-                  rootLayout.addView(headerLayout)
+                  LinearLayout header = new LinearLayout(this);
+                  header.setOrientation(LinearLayout.HORIZONTAL);
+                  header.setGravity(Gravity.CENTER_VERTICAL);
 
-                  etGiftCode = EditText(this).apply {
-                      hint = "Paste / Auto Catch Code..."
-                      setHintTextColor(Color.parseColor("#777788"))
-                      setTextColor(Color.WHITE)
-                      textSize = 13f
-                      setPadding(dp(10), 0, dp(10), 0)
-                      background = GradientDrawable().apply {
-                          setColor(Color.parseColor("#232336"))
-                          cornerRadius = dp(6).toFloat()
-                      }
-                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)).apply {
-                          topMargin = dp(8)
-                      }
-                  }
-                  rootLayout.addView(etGiftCode)
+                  TextView title = new TextView(this);
+                  title.setText("⚡ 0.1s ULTRA CLAIMER");
+                  title.setTextColor(Color.parseColor("#00FF66"));
+                  title.setTextSize(13f);
+                  title.setTypeface(null, android.graphics.Typeface.BOLD);
+                  title.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
 
-                  val buttonsLayout = LinearLayout(this).apply {
-                      orientation = LinearLayout.HORIZONTAL
-                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                          topMargin = dp(8)
-                      }
-                  }
+                  Button btnClose = new Button(this);
+                  btnClose.setText("✕");
+                  btnClose.setTextColor(Color.WHITE);
+                  btnClose.setBackgroundColor(Color.parseColor("#FF3B30"));
+                  btnClose.setLayoutParams(new LinearLayout.LayoutParams((int)(36 * density), (int)(36 * density)));
+                  btnClose.setOnClickListener(v -> stopSelf());
 
-                  btnAutoFire = Button(this).apply {
-                      text = "AUTO: OFF"
-                      setTextColor(Color.WHITE)
-                      textSize = 11f
-                      setBackgroundColor(Color.parseColor("#3A3A4C"))
-                      layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f)
-                  }
+                  header.addView(title);
+                  header.addView(btnClose);
+                  root.addView(header);
 
-                  val btnFire = Button(this).apply {
-                      text = "FIRE 🔥"
-                      setTextColor(Color.WHITE)
-                      textSize = 12f
-                      setTypeface(null, android.graphics.Typeface.BOLD)
-                      setBackgroundColor(Color.parseColor("#FF6600"))
-                      layoutParams = LinearLayout.LayoutParams(0, dp(42), 1.2f).apply {
-                          marginStart = dp(6)
-                      }
-                  }
-                  buttonsLayout.addView(btnAutoFire)
-                  buttonsLayout.addView(btnFire)
-                  rootLayout.addView(buttonsLayout)
+                  etCode = new EditText(this);
+                  etCode.setHint("Paste / Auto Catch Code...");
+                  etCode.setHintTextColor(Color.parseColor("#777788"));
+                  etCode.setTextColor(Color.WHITE);
+                  etCode.setTextSize(13f);
+                  GradientDrawable bgEd = new GradientDrawable();
+                  bgEd.setColor(Color.parseColor("#232336"));
+                  bgEd.setCornerRadius(6 * density);
+                  etCode.setBackground(bgEd);
+                  LinearLayout.LayoutParams lpEd = new LinearLayout.LayoutParams(-1, (int)(44 * density));
+                  lpEd.topMargin = dp8;
+                  etCode.setLayoutParams(lpEd);
+                  root.addView(etCode);
 
-                  tvStatus = TextView(this).apply {
-                      text = "Status: Sockets Pre-warmed & Ready"
-                      setTextColor(Color.parseColor("#00E5FF"))
-                      textSize = 11f
-                      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                          topMargin = dp(6)
-                      }
-                  }
-                  rootLayout.addView(tvStatus)
+                  LinearLayout btns = new LinearLayout(this);
+                  btns.setOrientation(LinearLayout.HORIZONTAL);
+                  LinearLayout.LayoutParams lpBtns = new LinearLayout.LayoutParams(-1, -2);
+                  lpBtns.topMargin = dp8;
+                  btns.setLayoutParams(lpBtns);
 
-                  floatingView = rootLayout
+                  btnAuto = new Button(this);
+                  btnAuto.setText("AUTO: OFF");
+                  btnAuto.setTextColor(Color.WHITE);
+                  btnAuto.setBackgroundColor(Color.parseColor("#3A3A4C"));
+                  btnAuto.setLayoutParams(new LinearLayout.LayoutParams(0, dp42, 1f));
+                  btnAuto.setOnClickListener(v -> {
+                      isAutoOn = !isAutoOn;
+                      btnAuto.setText(isAutoOn ? "AUTO: ON 🔥" : "AUTO: OFF");
+                      btnAuto.setBackgroundColor(isAutoOn ? Color.parseColor("#00AA44") : Color.parseColor("#3A3A4C"));
+                  });
 
-                  val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                  } else {
-                      WindowManager.LayoutParams.TYPE_PHONE
-                  }
+                  Button btnFire = new Button(this);
+                  btnFire.setText("FIRE 🔥");
+                  btnFire.setTextColor(Color.WHITE);
+                  btnFire.setTypeface(null, android.graphics.Typeface.BOLD);
+                  btnFire.setBackgroundColor(Color.parseColor("#FF6600"));
+                  LinearLayout.LayoutParams lpFire = new LinearLayout.LayoutParams(0, dp42, 1.2f);
+                  lpFire.leftMargin = (int)(6 * density);
+                  btnFire.setLayoutParams(lpFire);
+                  btnFire.setOnClickListener(v -> {
+                      String code = etCode.getText().toString().trim();
+                      if (!code.isEmpty()) fireCode(code);
+                  });
 
-                  val params = WindowManager.LayoutParams(
-                      dp(320),
-                      WindowManager.LayoutParams.WRAP_CONTENT,
-                      layoutType,
-                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                      PixelFormat.TRANSLUCENT
-                  ).apply {
-                      gravity = Gravity.TOP or Gravity.START
-                      x = dp(30)
-                      y = dp(80)
-                  }
+                  btns.addView(btnAuto);
+                  btns.addView(btnFire);
+                  root.addView(btns);
 
-                  windowManager.addView(floatingView, params)
+                  tvStatus = new TextView(this);
+                  tvStatus.setText("Status: Sockets Pre-warmed & Ready");
+                  tvStatus.setTextColor(Color.parseColor("#00E5FF"));
+                  tvStatus.setTextSize(11f);
+                  LinearLayout.LayoutParams lpSt = new LinearLayout.LayoutParams(-1, -2);
+                  lpSt.topMargin = (int)(6 * density);
+                  tvStatus.setLayoutParams(lpSt);
+                  root.addView(tvStatus);
 
-                  etGiftCode.setOnTouchListener { _, _ ->
-                      params.flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                      windowManager.updateViewLayout(floatingView, params)
-                      false
-                  }
+                  floatingView = root;
 
-                  btnClose.setOnClickListener { stopSelf() }
+                  int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ?
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE;
+                  WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                          dp320, WindowManager.LayoutParams.WRAP_CONTENT, type,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
+                  );
+                  params.gravity = Gravity.TOP | Gravity.START;
+                  params.x = (int)(30 * density);
+                  params.y = (int)(80 * density);
 
-                  btnFire.setOnClickListener {
-                      val code = etGiftCode.text.toString().trim()
-                      if (code.isNotEmpty()) executeClaim(code)
-                  }
+                  wm.addView(floatingView, params);
 
-                  btnAutoFire.setOnClickListener {
-                      isAutoFireEnabled = !isAutoFireEnabled
-                      btnAutoFire.text = if (isAutoFireEnabled) "AUTO: ON 🔥" else "AUTO: OFF"
-                      btnAutoFire.setBackgroundColor(if (isAutoFireEnabled) Color.parseColor("#00AA44") else Color.parseColor("#3A3A4C"))
-                  }
-
-                  headerLayout.setOnTouchListener(object : View.OnTouchListener {
-                      private var initX = 0
-                      private var initY = 0
-                      private var touchX = 0f
-                      private var touchY = 0f
-
-                      override fun onTouch(v: View?, event: MotionEvent): Boolean {
-                          when (event.action) {
-                              MotionEvent.ACTION_DOWN -> {
-                                  initX = params.x
-                                  initY = params.y
-                                  touchX = event.rawX
-                                  touchY = event.rawY
-                                  return true
-                              }
-                              MotionEvent.ACTION_MOVE -> {
-                                  params.x = initX + (event.rawX - touchX).toInt()
-                                  params.y = initY + (event.rawY - touchY).toInt()
-                                  windowManager.updateViewLayout(floatingView, params)
-                                  return true
-                              }
+                  header.setOnTouchListener(new View.OnTouchListener() {
+                      int initX, initY;
+                      float touchX, touchY;
+                      @Override
+                      public boolean onTouch(View v, MotionEvent e) {
+                          if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                              initX = params.x; initY = params.y;
+                              touchX = e.getRawX(); touchY = e.getRawY();
+                              return true;
+                          } else if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                              params.x = initX + (int)(e.getRawX() - touchX);
+                              params.y = initY + (int)(e.getRawY() - touchY);
+                              wm.updateViewLayout(floatingView, params);
+                              return true;
                           }
-                          return false
+                          return false;
                       }
-                  })
+                  });
               }
 
-              private fun setupClipboardListener() {
-                  val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-                  clipboard.addPrimaryClipChangedListener {
-                      val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString()?.trim() ?: ""
-
-                      if (clipText.length == 32) {
-                          etGiftCode.setText(clipText)
-                          if (isAutoFireEnabled) {
-                              executeClaim(clipText)
-                          }
-                      }
+              private void initClipboard() {
+                  ClipboardManager cb = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                  if (cb != null) {
+                      cb.addPrimaryClipChangedListener(() -> {
+                          try {
+                              ClipData data = cb.getPrimaryClip();
+                              if (data != null && data.getItemCount() > 0) {
+                                  String text = data.getItemAt(0).getText().toString().trim();
+                                  if (text.length() == 32) {
+                                      etCode.setText(text);
+                                      if (isAutoOn) fireCode(text);
+                                  }
+                              }
+                          } catch (Exception ignored) {}
+                      });
                   }
               }
 
-              private fun executeClaim(code: String) {
-                  val startTime = System.currentTimeMillis()
-                  tvStatus.text = "⚡ Firing ${registeredAccounts.size} IDs..."
+              private void fireCode(String code) {
+                  long t0 = System.currentTimeMillis();
+                  tvStatus.setText("⚡ Firing " + accounts.size() + " IDs...");
+                  byte[] payload = ("{\"giftCode\":\"" + code + "\"}").getBytes();
+                  MediaType json = MediaType.parse("application/json; charset=utf-8");
 
-                  serviceScope.launch {
-                      val results = FastClaimEngine.fireInstant(code, registeredAccounts)
-                      val duration = System.currentTimeMillis() - startTime
-
-                      withContext(Dispatchers.Main) {
-                          tvStatus.text = "🔥 Done in ${duration}ms | Hit: ${results.size} IDs"
-                      }
+                  List<CompletableFuture<Integer>> futures = new ArrayList<>();
+                  for (String[] acc : accounts) {
+                      futures.add(CompletableFuture.supplyAsync(() -> {
+                          try {
+                              Request req = new Request.Builder()
+                                      .url("https://" + acc[1] + "/api/web/v1/gift/receive")
+                                      .addHeader("Authorization", "Bearer " + acc[0])
+                                      .addHeader("Connection", "keep-alive")
+                                      .post(RequestBody.create(payload, json))
+                                      .build();
+                              Response res = client.newCall(req).execute();
+                              int c = res.code();
+                              res.close();
+                              return c;
+                          } catch (Exception e) { return 500; }
+                      }, executor));
                   }
+
+                  CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).thenRun(() -> {
+                      long dur = System.currentTimeMillis() - t0;
+                      new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                          tvStatus.setText("🔥 Done in " + dur + "ms | Hit: " + accounts.size() + " IDs");
+                      });
+                  });
               }
 
-              private fun startForegroundNotification() {
-                  val channelId = "ultra_claimer_channel"
+              private void startNotification() {
+                  String chId = "claimer_ch";
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                      val chan = NotificationChannel(channelId, "Ultra Claimer", NotificationManager.IMPORTANCE_LOW)
-                      getSystemService(NotificationManager::class.java).createNotificationChannel(chan)
+                      NotificationChannel ch = new NotificationChannel(chId, "Claimer", NotificationManager.IMPORTANCE_LOW);
+                      ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch);
                   }
-
-                  val notification = NotificationCompat.Builder(this, channelId)
-                      .setContentTitle("Ultra Auto Claimer Active")
-                      .setContentText("Listening for gift codes...")
-                      .setSmallIcon(android.R.drawable.ic_menu_compass)
-                      .build()
-
-                  startForeground(101, notification)
+                  Notification n = new NotificationCompat.Builder(this, chId)
+                          .setContentTitle("0.1s Claimer Active")
+                          .setSmallIcon(android.R.drawable.ic_menu_compass)
+                          .build();
+                  startForeground(101, n);
               }
 
-              override fun onDestroy() {
-                  super.onDestroy()
-                  if (::floatingView.isInitialized) {
-                      windowManager.removeView(floatingView)
-                  }
+              @Override
+              public void onDestroy() {
+                  super.onDestroy();
+                  if (floatingView != null && wm != null) wm.removeView(floatingView);
+                  executor.shutdown();
               }
           }
+          EOF
 
-          class MainActivity : AppCompatActivity() {
+      - name: Build Debug APK
+        run: gradle assembleDebug --stacktrace
 
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-
-                  val btnStart = Button(this).apply {
-                      text = "START 0.1s FLOATING CLAIMER"
-                      textSize = 16f
-                      setBackgroundColor(Color.parseColor("#FF6600"))
-                      setTextColor(Color.WHITE)
-                      setOnClickListener { checkPermissionAndStart() }
-                  }
-                  setContentView(btnStart)
-              }
-
-              private fun checkPermissionAndStart() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-                      val intent = Intent(
-                          Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                          Uri.parse("package:$packageName")
-                      )
-                      startActivity(intent)
-                      Toast.makeText(this, "Overlay Permission Allow करें", Toast.LENGTH_LONG).show()
-                  } else {
-                      val serviceIntent = Intent(this, FloatingClaimerService::class.java)
-                      if (Build.VERSION.SDK_INT >= Buil
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoClaimer-0.1s-APK
+          path: app/build/outputs/apk/debug/*.apk
+          
