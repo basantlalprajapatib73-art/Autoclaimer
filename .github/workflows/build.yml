@@ -15,40 +15,46 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.2'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Build Project & APK
+      - name: Build Android Project
         run: |
+          mkdir -p app/src/main/res/values
           mkdir -p app/src/main/java/com/example/autoclaimer
 
-          cat > settings.gradle << 'EOF'
+          # 1. settings.gradle
+          cat << 'EOF' > settings.gradle
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
           rootProject.name = "AutoClaimer"
           include ':app'
           EOF
 
-          cat > build.gradle << 'EOF'
-          buildscript {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath "com.android.tools.build:gradle:8.2.2"
-              }
-          }
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
+          # 2. build.gradle (root)
+          cat << 'EOF' > build.gradle
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
           }
           EOF
 
-          cat > app/build.gradle << 'EOF'
-          apply plugin: 'com.android.application'
+          # 3. app/build.gradle
+          cat << 'EOF' > app/build.gradle
+          plugins {
+              id 'com.android.application'
+          }
 
           android {
               namespace 'com.example.autoclaimer'
@@ -61,6 +67,12 @@ jobs:
                   versionCode 1
                   versionName "1.0"
               }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_1_8
                   targetCompatibility JavaVersion.VERSION_1_8
@@ -68,12 +80,19 @@ jobs:
           }
 
           dependencies {
-              implementation 'androidx.appcompat:appcompat:1.6.1'
               implementation 'com.squareup.okhttp3:okhttp:4.12.0'
           }
           EOF
 
-          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          # 4. strings.xml
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">0.1s Claimer</string>
+          </resources>
+          EOF
+
+          # 5. AndroidManifest.xml
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
@@ -81,8 +100,8 @@ jobs:
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <application
                   android:allowBackup="true"
-                  android:label="0.1s Claimer"
-                  android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+                  android:label="@string/app_name"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
                   <activity android:name=".MainActivity" android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
@@ -94,8 +113,10 @@ jobs:
           </manifest>
           EOF
 
-          cat > app/src/main/java/com/example/autoclaimer/MainActivity.java << 'EOF'
+          # 6. MainActivity.java
+          cat << 'EOF' > app/src/main/java/com/example/autoclaimer/MainActivity.java
           package com.example.autoclaimer;
+
           import android.app.Activity;
           import android.content.Intent;
           import android.graphics.Color;
@@ -117,7 +138,8 @@ jobs:
                   btn.setTextSize(16f);
                   btn.setOnClickListener(v -> {
                       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-                          startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
+                          Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()));
+                          startActivity(intent);
                           Toast.makeText(this, "Overlay Allow Karein", Toast.LENGTH_SHORT).show();
                       } else {
                           startService(new Intent(this, FloatingClaimerService.class));
@@ -129,8 +151,10 @@ jobs:
           }
           EOF
 
-          cat > app/src/main/java/com/example/autoclaimer/FloatingClaimerService.java << 'EOF'
+          # 7. FloatingClaimerService.java
+          cat << 'EOF' > app/src/main/java/com/example/autoclaimer/FloatingClaimerService.java
           package com.example.autoclaimer;
+
           import android.app.Notification;
           import android.app.NotificationChannel;
           import android.app.NotificationManager;
@@ -191,7 +215,7 @@ jobs:
 
               @Override
               public void onCreate() {
-                  super.onCreate() ;
+                  super.onCreate();
                   startNotif();
                   initUI();
                   preWarm();
@@ -399,11 +423,17 @@ jobs:
           }
           EOF
 
-          # Build APK with Gradle
-          gradle assembleDebug --no-daemon
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Build Debug APK
+        run: gradle assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoClaimer-0.1s-APK
           path: app/build/outputs/apk/debug/*.apk
+          
